@@ -28,7 +28,7 @@ from src.tools.catalog_tools import build_catalog_tools
 
 load_dotenv()
 
-_llm: Optional[LLMProvider] = None
+_llm_cache: dict[str, LLMProvider] = {}
 _sessions: dict[str, ChatbotBaseline] = {}
 _tools: list[dict[str, Any]] = []
 _api_events: list[dict[str, Any]] = []
@@ -45,11 +45,16 @@ def _parse_cors_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _llm, _provider, _tools
+    global _provider, _tools
     _provider = os.getenv("DEFAULT_PROVIDER", "openai")
-    logger.log_event("API_START", {"provider": _provider, "port": os.getenv("API_PORT", "3003")})
+    logger.log_event(
+        "API_START",
+        {
+            "default_provider": _provider,
+            "port": os.getenv("API_PORT", "3003"),
+        },
+    )
     try:
-        _llm = get_llm(_provider, quiet=True)
         _tools = build_catalog_tools()
     except (FileNotFoundError, ValueError) as e:
         logger.log_event("API_START_FAILED", {"error": str(e)})
@@ -100,12 +105,35 @@ class CompareResponse(BaseModel):
     usage: dict[str, Any]
 
 
-def _get_session(session_id: Optional[str]) -> tuple[str, ChatbotBaseline]:
-    if _llm is None:
-        raise HTTPException(status_code=503, detail="LLM not loaded")
+def _get_llm_for_req(provider: Optional[str], model: Optional[str]) -> LLMProvider:
+    prov = (provider or _provider or os.getenv("DEFAULT_PROVIDER", "openai")).lower().strip()
+    mod = model or "default"
+    cache_key = f"{prov}:{mod}"
+    if cache_key not in _llm_cache:
+        try:
+            _llm_cache[cache_key] = get_llm(
+                prov,
+                model_name=model if model != "default" else None,
+                quiet=True,
+            )
+        except Exception as e:
+            logger.log_event(
+                "LLM_LOAD_ERROR",
+                {"error": str(e), "provider": prov, "model": model},
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to load {prov} model {mod}: {e}",
+            ) from e
+    return _llm_cache[cache_key]
+
+
+def _get_session(session_id: Optional[str], req_llm: LLMProvider) -> tuple[str, ChatbotBaseline]:
     sid = session_id or str(uuid.uuid4())
     if sid not in _sessions:
-        _sessions[sid] = ChatbotBaseline(_llm)
+        _sessions[sid] = ChatbotBaseline(req_llm)
+    else:
+        _sessions[sid].llm = req_llm
     return sid, _sessions[sid]
 
 
@@ -154,13 +182,15 @@ def _record_event(
     response: dict[str, Any],
     step_count: int,
     error_code: Optional[str] = None,
+    llm: Optional[LLMProvider] = None,
+    provider: Optional[str] = None,
 ) -> dict[str, Any]:
     telemetry_event = {
         "id": str(uuid.uuid4()),
         "timestamp": datetime.utcnow().isoformat(),
         "event": event,
-        "provider": _provider_name(),
-        "model": _llm.model_name if _llm else "unknown",
+        "provider": provider or _provider_name(),
+        "model": llm.model_name if llm else "unknown",
         "latencyMs": response.get("latencyMs", 0),
         "promptTokens": response.get("promptTokens", 0),
         "completionTokens": response.get("completionTokens", 0),
@@ -194,16 +224,17 @@ def _usage_summary() -> dict[str, Any]:
 def health():
     return {
         "status": "ok",
-        "provider": _provider,
-        "model": _llm.model_name if _llm else None,
+        "default_provider": _provider,
         "sessions": len(_sessions),
+        "cached_llms": len(_llm_cache),
     }
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
+    req_llm = _get_llm_for_req(req.provider, req.model)
     try:
-        sid, bot = _get_session(req.session_id)
+        sid, bot = _get_session(req.session_id, req_llm)
         data = bot.complete(req.message.strip())
     except Exception as e:
         logger.log_event("API_CHAT_ERROR", {"error": str(e)})
@@ -221,7 +252,8 @@ def chat(req: ChatRequest):
 
 @app.post("/api/compare", response_model=CompareResponse)
 def compare(req: ChatRequest):
-    sid, bot = _get_session(req.session_id)
+    req_llm = _get_llm_for_req(req.provider, req.model)
+    sid, bot = _get_session(req.session_id, req_llm)
     prompt = req.message.strip()
 
     try:
@@ -246,10 +278,8 @@ def compare(req: ChatRequest):
         )
 
     try:
-        if _llm is None:
-            raise RuntimeError("LLM not loaded")
         start = time.time()
-        agent = ReActAgent(llm=_llm, tools=_tools, max_steps=5)
+        agent = ReActAgent(llm=req_llm, tools=_tools, max_steps=5)
         answer = agent.run(prompt)
         latency_ms = int((time.time() - start) * 1000)
         metrics = dict(agent.last_run_metrics)
@@ -282,8 +312,22 @@ def compare(req: ChatRequest):
     }
 
     new_events = [
-        _record_event("CHATBOT_BASELINE", baseline, baseline.get("steps", 1), baseline.get("errorCode")),
-        _record_event("AGENT_END", react, react.get("steps", 1), react.get("errorCode")),
+        _record_event(
+            "CHATBOT_BASELINE",
+            baseline,
+            baseline.get("steps", 1),
+            baseline.get("errorCode"),
+            llm=req_llm,
+            provider=req.provider,
+        ),
+        _record_event(
+            "AGENT_END",
+            react,
+            react.get("steps", 1),
+            react.get("errorCode"),
+            llm=req_llm,
+            provider=req.provider,
+        ),
     ]
 
     return CompareResponse(
@@ -308,8 +352,9 @@ def usage():
 
 @app.post("/api/chat/stream")
 def chat_stream(req: ChatRequest):
+    req_llm = _get_llm_for_req(req.provider, req.model)
     try:
-        sid, bot = _get_session(req.session_id)
+        sid, bot = _get_session(req.session_id, req_llm)
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
 

@@ -41,7 +41,12 @@ CATALOG_COLUMNS = [
 ]
 
 
-def get_llm(provider: str, *, quiet: bool = False) -> LLMProvider:
+def get_llm(
+    provider: str,
+    *,
+    model_name: str | None = None,
+    quiet: bool = False,
+) -> LLMProvider:
     provider = provider.lower().strip()
 
     if provider == "local":
@@ -64,7 +69,7 @@ def get_llm(provider: str, *, quiet: bool = False) -> LLMProvider:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key or api_key.startswith("your_"):
             raise ValueError("Set OPENAI_API_KEY in .env for provider openai")
-        model = os.getenv("DEFAULT_MODEL", "gpt-4o")
+        model = model_name or os.getenv("DEFAULT_MODEL", "gpt-4o")
         if not quiet:
             print(f"[openai] Using model: {model}")
         return OpenAIProvider(model_name=model, api_key=api_key)
@@ -73,7 +78,7 @@ def get_llm(provider: str, *, quiet: bool = False) -> LLMProvider:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key or api_key.startswith("your_"):
             raise ValueError("Set GEMINI_API_KEY in .env for provider google")
-        model = os.getenv("DEFAULT_MODEL", "gemini-1.5-flash")
+        model = model_name or os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
         if not quiet:
             print(f"[google] Using model: {model}")
         return GeminiProvider(model_name=model, api_key=api_key)
