@@ -1,6 +1,6 @@
 # Individual Report: Lab 3 - Chatbot vs ReAct Agent
 
-- **Student Name**: Nam Hoang
+- **Student Name**: Trần Hoàng Nam
 - **Student ID**: 2A202600870
 - **Date**: 2026-06-01
 
