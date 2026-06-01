@@ -48,13 +48,18 @@ Action: tool_name({{"arg": "value"}})
 
 Or, when enough observations are available:
 Thought: your reasoning
-Final Answer: concise answer for the user
+Final Answer: detailed shopping advice for the user
 
 Rules:
 - Call tools when the user asks for catalog facts, prices, totals, ratings, or delivery.
 - Feed each Observation into the next Thought.
 - If a tool fails or returns no data, explain that in the next Thought and try a better query.
 - Never output an Action for a tool that is not listed.
+- Final Answer must sound like an agent explaining its decision, not a one-line chatbot.
+- If the user writes Vietnamese, answer in Vietnamese.
+- Final Answer should be 5-8 natural sentences or 3-5 tight bullets.
+- Include: the chosen product/shop, final or sale price, rating, delivery time, why it beats at least one alternative from the observations, any description-based caveat, and a clear buying recommendation.
+- Do not answer only "X is a good choice." The user should see the comparison logic.
 """.strip()
 
     def run(self, user_input: str) -> str:
@@ -92,6 +97,20 @@ Rules:
 
             final_answer = self._parse_final_answer(content)
             if final_answer:
+                if self._final_answer_is_too_thin(final_answer) and step < self.max_steps:
+                    logger.log_event(
+                        "AGENT_FINAL_TOO_THIN",
+                        {"step": step, "answer_preview": final_answer[:300]},
+                    )
+                    scratchpad = (
+                        f"{scratchpad}\n\nAssistant:\n{content}\n"
+                        "Observation: Final Answer is too short for this shopping agent. "
+                        "Rewrite it as detailed Vietnamese buying advice with 5-8 sentences "
+                        "or 3-5 bullets. Include chosen product/shop, price, rating, delivery, "
+                        "comparison with an alternative, caveats from description, and a clear recommendation."
+                    )
+                    continue
+
                 self.history.append(
                     {
                         "user": user_input,
@@ -201,6 +220,15 @@ Rules:
             flags=re.IGNORECASE | re.DOTALL,
         )
         return match.group(1).strip() if match else ""
+
+    def _final_answer_is_too_thin(self, answer: str) -> bool:
+        normalized = re.sub(r"\s+", " ", answer).strip()
+        if len(normalized) < 220:
+            return True
+
+        sentence_count = len(re.findall(r"[.!?。]|[。！？]", normalized))
+        bullet_count = len(re.findall(r"(^|\n)\s*[-*•]", answer))
+        return sentence_count < 3 and bullet_count < 3
 
     def _parse_action_args(self, args: str) -> Any:
         args = args.strip()
