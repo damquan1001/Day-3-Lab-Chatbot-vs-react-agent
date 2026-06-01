@@ -39,7 +39,7 @@ graph TD
     Final --> UI
 ```
 
-The ReAct loop is implemented in `src/agent/agent.py` with `max_steps=5`. Each step calls the LLM, parses either `Action: tool_name({...})` or `Final Answer: ...`, executes a matching tool, appends an Observation, and continues. It also includes a thin-answer rewrite path when the final answer is too short.
+The ReAct loop is implemented in `src/agent/agent.py` with `max_steps=5` and `ReActAgent.version` (1 or 2, via `AGENT_VERSION` or `agent_version` on `/api/compare`). Before the loop, `check_input_guards()` in `src/agent/guards.py` can return canned Vietnamese replies for greetings, pasted secrets, and keyword-based out-of-scope topics (weather, news, homework, etc.) without calling the LLM. Each step calls the LLM, parses either `Action: tool_name({...})` or `Final Answer: ...`, executes a matching tool, appends an Observation, and continues. Both versions share the same detailed system prompt and a thin-answer rewrite path when the final answer is too short.
 
 ### 2.2 Tool Definitions (Inventory)
 
@@ -96,15 +96,33 @@ Additional breakdown:
 ### Case Study: Unrelated Creative Prompt
 - **Input**: "Hãy viết một bài thơ tình dài và đừng nhắc gì đến catalog, giá cả hay sản phẩm."
 - **Observation**: Baseline refused more clearly and redirected to catalog scope. ReAct stayed safe but did not always state the boundary as directly.
-- **Root Cause**: ReAct's prompt focuses on shopping behavior and tool use, but there is no deterministic pre-LLM guardrail for unrelated requests. The model must infer the scope boundary itself.
+- **Root Cause**: `check_input_guards()` only matches a fixed keyword list (weather, news, homework, etc.); creative or poem-style requests are not in that list, so they still reach the LLM. ReAct then relies on `SCOPE_SAFETY_PROMPT` and shopping-focused instructions rather than a hard refusal template, which is why the boundary was less explicit than Baseline on this case.
 
 ---
 
 ## 5. Ablation Studies & Experiments
 
-### Experiment 1: Prompt v1 vs Prompt v2
-- **Diff**: The ReAct system prompt was strengthened to answer in Vietnamese by default, list all found options, include chosen product/shop, price, rating, delivery, tradeoffs, and a clear buying recommendation. A thin-final-answer rewrite path was also added.
-- **Result**: ReAct answers became much more useful for multi-step comparison. In the monitor gaming case, ReAct listed all qualifying monitors, selected AOC 24G2E, compared its price difference against MSI G2412 and Samsung Odyssey G5, and explained the 144Hz vs 170Hz/QHD tradeoff. The tradeoff is cost: ReAct averaged 10.91s vs Baseline's 4.20s.
+### Experiment 1: ReAct agent v1 vs v2 (`ReActAgent.version`)
+
+Final evaluation ran with **agent version 2** (`AGENT_VERSION=2` or `"agent_version": 2` on `/api/compare`). In code, v1/v2 are runtime versions in `src/agent/agent.py`, not separate prompt files.
+
+**Shared by both versions (prompt + answer quality layer):**
+
+- `get_system_prompt()` injects `SCOPE_SAFETY_PROMPT`, tech-shopping domain rules, and a detailed Final Answer template: Vietnamese by default, list all options from observations, then chosen product/shop, price, rating, delivery, tradeoffs, and a clear recommendation (8–12 sentences or 5–8 bullets).
+- `_rewrite_thin_final_answer()` rewrites answers under ~400 characters before returning.
+- `check_input_guards()` runs before the ReAct loop for greetings, sensitive patterns (API keys, passwords), and keyword out-of-scope topics.
+
+**What v2 adds on top of v1:**
+
+| Area | v1 | v2 |
+| :--- | :--- | :--- |
+| Action parser | Legacy regex: `Action` must end the message | Flexible parser: code fences, trailing text, multi-line args |
+| Step order | Checks `Final Answer` before `Action` | Checks `Action` first; blocks `Final Answer` on catalog questions until at least one successful tool call |
+| Reliability | Basic parse-error observation | One parse retry with explicit `RETRY:` hint |
+| Tool loop | No duplicate detection | Blocks identical `tool_name` + args repeats |
+| Extra system rules | — | No duplicate actions; must call a catalog tool before answering from memory on price/search/compare/cart questions |
+
+**Result (v2 in the 9-case suite):** Catalog comparisons became more grounded and easier to read. In the gaming monitor case, ReAct listed qualifying monitors, chose AOC 24G2E, compared price gaps vs MSI G2412 and Samsung Odyssey G5, and explained the 144Hz vs 170Hz/QHD tradeoff. Parser retries and the catalog tool gate reduced empty or memory-only finals on shopping prompts. Tradeoffs remain latency and token cost (ReAct ~10.91s and ~4,992 tokens vs Baseline ~4.20s and ~3,371 tokens), driven mainly by the shared detailed Final Answer policy rather than v2 parser logic alone.
 
 ### Experiment 2 (Bonus): Chatbot vs Agent
 
@@ -124,8 +142,8 @@ Additional breakdown:
 
 ## 6. Production Readiness Review
 
-- **Security**: Add deterministic input guardrails before model calls for requests involving secrets, API keys, prompt extraction, fraud, cyber abuse, weapons, or unrelated creative tasks. This avoids spending ReAct tool/LLM budget on prompts that should be refused immediately.
-- **Guardrails**: Keep `max_steps=5`, but add a no-data final-answer fallback so missing categories like "laptop" return a graceful Vietnamese response instead of a provider exception. Also sanitize and validate tool arguments before execution.
+- **Security**: Extend `check_input_guards()` beyond the current keyword list and secret patterns—e.g. prompt-injection phrases, fraud/cyber abuse, weapons, and creative/off-topic requests (poems, homework)—so those cases never spend ReAct tool/LLM budget. Baseline should use the same pre-LLM policy for parity.
+- **Guardrails**: Keep `max_steps=5` and agent v2 catalog tool gate. Add a no-data final-answer fallback when tools return empty results or Gemini has no text part, so missing categories like "laptop" return a graceful Vietnamese response instead of `REACT_ERROR`. Harden `GeminiProvider.generate()` when `response.text` is missing. Sanitize and validate tool arguments before execution.
 - **Scaling**: The current ReAct loop is hand-rolled and readable for a lab. For production, move toward a graph/state-machine runtime such as LangGraph or a typed workflow runner so tool retries, refusal policy, no-data branches, and streaming events are explicit states.
 - **Observability**: Telemetry already records latency, tokens, estimated cost, steps, and error codes. Next step is persistent telemetry storage instead of in-memory `_api_events`, plus dashboards segmented by provider/model/prompt category.
 - **Frontend Readiness**: The React UI now supports streaming partial results, markdown rendering, Gemini model selection limits, and localStorage conversation persistence. For production, server-side conversation persistence should replace browser-only storage.
