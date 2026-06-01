@@ -9,15 +9,22 @@ class LocalProvider(LLMProvider):
     LLM Provider for local models using llama-cpp-python.
     Optimized for CPU usage with GGUF models.
     """
-    def __init__(self, model_path: str, n_ctx: int = 4096, n_threads: Optional[int] = None):
+    def __init__(
+        self,
+        model_path: str,
+        model_name: str | None = None,
+        n_ctx: int = 4096,
+        n_threads: Optional[int] = None,
+    ):
         """
         Initialize the local Llama model.
         Args:
             model_path: Path to the .gguf model file.
+            model_name: Display name from DEFAULT_MODEL in .env.
             n_ctx: Context window size.
             n_threads: Number of CPU threads to use. Defaults to all available.
         """
-        super().__init__(model_name=os.path.basename(model_path))
+        super().__init__(model_name=model_name or os.path.basename(model_path))
         
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}. Please download it first.")

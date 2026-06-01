@@ -13,42 +13,62 @@ from src.telemetry.metrics import tracker
 SYSTEM_PROMPT = build_system_prompt()
 
 
+def _require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise ValueError(f"Set {name} in .env")
+    return value
+
+
+def _resolve_local_model_path(model_name: str) -> str:
+    local_path = os.getenv("LOCAL_MODEL_PATH", "").strip()
+    if local_path:
+        return local_path
+    return os.path.join("models", f"{model_name}.gguf")
+
+
 def get_llm(provider: str, *, quiet: bool = False) -> LLMProvider:
     provider = provider.lower().strip()
+    model_name = _require_env("DEFAULT_MODEL")
 
     if provider == "local":
-        model_path = os.getenv("LOCAL_MODEL_PATH", "./models/Phi-3-mini-4k-instruct-q4.gguf")
+        model_path = _resolve_local_model_path(model_name)
         if not os.path.exists(model_path):
             raise FileNotFoundError(
                 f"Local model not found: {model_path}. "
-                "Download Phi-3 GGUF into models/ or use provider openai/google."
+                "Set LOCAL_MODEL_PATH or DEFAULT_MODEL in .env, then download the GGUF file."
             )
-        msg = f"Loading local model: {model_path}"
+        msg = f"Loading local model: {model_name} ({model_path})"
         if quiet:
-            logger.log_event("LLM_LOAD", {"provider": "local", "path": model_path})
+            logger.log_event(
+                "LLM_LOAD",
+                {"provider": "local", "model": model_name, "path": model_path},
+            )
         else:
             print(f"[local] {msg} (first run may take a few minutes)")
-        return LocalProvider(model_path=model_path)
+        return LocalProvider(model_path=model_path, model_name=model_name)
 
     if provider == "openai":
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key or api_key.startswith("your_"):
+        api_key = _require_env("OPENAI_API_KEY")
+        if api_key.startswith("your_"):
             raise ValueError("Set OPENAI_API_KEY in .env for provider openai")
-        model = os.getenv("DEFAULT_MODEL", "gpt-4o")
         if not quiet:
-            print(f"[openai] Using model: {model}")
-        return OpenAIProvider(model_name=model, api_key=api_key)
+            print(f"[openai] Using model: {model_name}")
+        return OpenAIProvider(model_name=model_name, api_key=api_key)
 
     if provider in ("google", "gemini"):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key or api_key.startswith("your_"):
+        api_key = _require_env("GEMINI_API_KEY")
+        if api_key.startswith("your_"):
             raise ValueError("Set GEMINI_API_KEY in .env for provider google")
-        model = os.getenv("DEFAULT_MODEL", "gemini-1.5-flash")
         if not quiet:
-            print(f"[google] Using model: {model}")
-        return GeminiProvider(model_name=model, api_key=api_key)
+            print(f"[google] Using model: {model_name}")
+        return GeminiProvider(model_name=model_name, api_key=api_key)
 
     raise ValueError(f"Unknown provider: {provider}. Use: local | openai | google")
+
+
+def get_default_provider() -> str:
+    return _require_env("DEFAULT_PROVIDER")
 
 
 def build_prompt(history: list[dict[str, str]], user_input: str) -> str:

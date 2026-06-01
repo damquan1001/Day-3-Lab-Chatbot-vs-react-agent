@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.chat.baseline import ChatbotBaseline, get_llm
+from src.chat.baseline import ChatbotBaseline, get_default_provider, get_llm
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
 
@@ -40,7 +40,7 @@ def _parse_cors_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _llm, _provider
-    _provider = os.getenv("DEFAULT_PROVIDER", "local")
+    _provider = get_default_provider()
     logger.log_event("API_START", {"provider": _provider, "port": os.getenv("API_PORT", "3003")})
     try:
         _llm = get_llm(_provider, quiet=True)

@@ -8,7 +8,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from src.chat.baseline import ChatbotBaseline, get_llm
+from src.chat.baseline import ChatbotBaseline, get_default_provider, get_llm
 from src.telemetry.logger import logger
 
 
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     load_dotenv()
     args = parse_args()
-    provider = args.provider or os.getenv("DEFAULT_PROVIDER", "local")
+    provider = args.provider or get_default_provider()
 
     logger.log_event("CHATBOT_START", {"provider": provider})
 
