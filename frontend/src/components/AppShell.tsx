@@ -145,8 +145,8 @@ export function AppShell() {
             <FileSpreadsheet className="h-4 w-4 text-accent" />
             Simulated database
           </div>
-          <p className="mt-2 text-sm font-medium">deals_inventory.xlsx</p>
-          <p className="mt-1 text-xs text-muted-foreground">MVP data source for tool calls</p>
+          <p className="mt-2 text-sm font-medium">banggia.xlsx</p>
+          <p className="mt-1 text-xs text-muted-foreground">Backend catalog for baseline and tools</p>
         </div>
 
         <div className="mt-5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -299,9 +299,9 @@ export function AppShell() {
                 </div>
                 <div className="mt-4 grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
                   {[
-                    "sendComparisonMessage(input, provider, model, conversationId)",
-                    "getTelemetry(conversationId)",
-                    "getUsageSummary(conversationId)",
+                    "POST /api/compare",
+                    "GET /api/telemetry",
+                    "GET /api/usage",
                     "listConversations()",
                     "createConversation()"
                   ].map((item) => (
@@ -420,7 +420,7 @@ function TelemetryTable({ events }: { events: TelemetryEvent[] }) {
       <div className="shrink-0 flex items-center justify-between border-b border-border px-4 py-3">
         <div>
           <h3 className="font-semibold">Structured telemetry</h3>
-          <p className="text-xs text-muted-foreground">Events are mocked until backend logs land.</p>
+          <p className="text-xs text-muted-foreground">Events are returned by the backend API.</p>
         </div>
         <Badge>{events.length} events</Badge>
       </div>

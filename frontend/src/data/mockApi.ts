@@ -8,6 +8,8 @@ import type {
   UsageSummary
 } from "../types";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3003";
+
 export const providerModels: ProviderModel[] = [
   {
     provider: "openai",
@@ -29,37 +31,33 @@ export const providerModels: ProviderModel[] = [
 const seedConversations: Conversation[] = [
   {
     id: "conv-1",
-    title: "Laptop bundle hunt",
+    title: "Product search",
     updatedAt: new Date().toISOString()
-  },
-  {
-    id: "conv-2",
-    title: "Coupon stack test",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 48).toISOString()
   }
-];
-
-const seedTelemetry: TelemetryEvent[] = [
-  makeEvent("AGENT_START", "openai", "gpt-4o", 0, 0, 0, 0),
-  makeEvent("LLM_METRIC", "openai", "gpt-4o", 842, 312, 116, 2),
-  makeEvent("TOOL_CALL", "openai", "gpt-4o", 118, 24, 18, 2),
-  makeEvent("AGENT_END", "openai", "gpt-4o", 1310, 388, 142, 3)
 ];
 
 let conversations = [...seedConversations];
 let turns: ChatTurn[] = [];
-let telemetry = [...seedTelemetry];
+let telemetry: TelemetryEvent[] = [];
+const sessionByConversation = new Map<string, string>();
+
+type CompareApiResponse = {
+  baseline: AgentResponse;
+  react: AgentResponse;
+  turn?: ChatTurn;
+  session_id?: string;
+  telemetry?: TelemetryEvent[];
+  usage?: UsageSummary;
+};
 
 export async function listConversations() {
-  await wait(120);
   return conversations;
 }
 
 export async function createConversation() {
-  await wait(120);
   const conversation: Conversation = {
     id: `conv-${crypto.randomUUID()}`,
-    title: "New deal hunt",
+    title: "New product search",
     updatedAt: new Date().toISOString()
   };
   conversations = [conversation, ...conversations];
@@ -72,17 +70,39 @@ export async function sendComparisonMessage(
   model: string,
   conversationId: string
 ) {
-  await wait(650);
+  const sessionId = sessionByConversation.get(conversationId);
+  const response = await fetch(`${API_BASE_URL}/api/compare`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      message: input,
+      provider,
+      model,
+      session_id: sessionId
+    })
+  });
 
-  const baseline = makeResponse("baseline", input, 890);
-  const react = makeResponse("react", input, 1480);
-  const turn: ChatTurn = {
-    id: crypto.randomUUID(),
-    prompt: input,
-    createdAt: new Date().toISOString(),
-    baseline,
-    react
-  };
+  if (!response.ok) {
+    const message = await readError(response);
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as CompareApiResponse;
+  if (data.session_id) {
+    sessionByConversation.set(conversationId, data.session_id);
+  }
+
+  const turn: ChatTurn =
+    data.turn ??
+    ({
+      id: crypto.randomUUID(),
+      prompt: input,
+      createdAt: new Date().toISOString(),
+      baseline: data.baseline,
+      react: data.react
+    } satisfies ChatTurn);
 
   turns = [...turns, turn];
   conversations = conversations.map((conversation) =>
@@ -95,92 +115,55 @@ export async function sendComparisonMessage(
       : conversation
   );
 
-  telemetry = [
-    makeEvent("CHATBOT_BASELINE", provider, model, baseline.latencyMs, 268, 96, 1),
-    makeEvent("AGENT_START", provider, model, 0, 0, 0, 0),
-    makeEvent("TOOL_CALL", provider, model, 124, 38, 14, 1),
-    makeEvent("LLM_METRIC", provider, model, react.latencyMs, 402, 176, react.steps ?? 3),
-    makeEvent("AGENT_END", provider, model, react.latencyMs, 402, 176, react.steps ?? 3),
-    ...telemetry
-  ];
+  if (data.telemetry) {
+    telemetry = [...data.telemetry, ...telemetry];
+  }
 
-  return { baseline, react, turn };
+  return { baseline: data.baseline, react: data.react, turn };
 }
 
 export async function getTelemetry() {
-  await wait(80);
+  const response = await fetch(`${API_BASE_URL}/api/telemetry`);
+  if (!response.ok) {
+    return telemetry;
+  }
+
+  telemetry = (await response.json()) as TelemetryEvent[];
   return telemetry;
 }
 
 export async function getUsageSummary(): Promise<UsageSummary> {
-  await wait(80);
+  const response = await fetch(`${API_BASE_URL}/api/usage`);
+  if (response.ok) {
+    return (await response.json()) as UsageSummary;
+  }
+
   const allResponses = turns.flatMap((turn) => [turn.baseline, turn.react]);
-  const fallbackTokens = telemetry.reduce((sum, item) => sum + item.totalTokens, 0);
-  const totalTokens =
-    allResponses.reduce((sum, response) => sum + response.totalTokens, 0) || fallbackTokens;
-  const estimatedCost =
-    allResponses.reduce((sum, response) => sum + response.costEstimate, 0) ||
-    telemetry.reduce((sum, item) => sum + item.costEstimate, 0);
-  const averageLatencyMs =
-    allResponses.length > 0
-      ? allResponses.reduce((sum, response) => sum + response.latencyMs, 0) / allResponses.length
-      : 1010;
+  return summarizeResponses(allResponses);
+}
+
+function summarizeResponses(responses: AgentResponse[]): UsageSummary {
+  if (responses.length === 0) {
+    return {
+      totalTokens: 0,
+      estimatedCost: 0,
+      averageLatencyMs: 0
+    };
+  }
 
   return {
-    totalTokens,
-    estimatedCost,
-    averageLatencyMs
+    totalTokens: responses.reduce((sum, response) => sum + response.totalTokens, 0),
+    estimatedCost: responses.reduce((sum, response) => sum + response.costEstimate, 0),
+    averageLatencyMs:
+      responses.reduce((sum, response) => sum + response.latencyMs, 0) / responses.length
   };
 }
 
-function makeResponse(kind: "baseline" | "react", input: string, latencyMs: number): AgentResponse {
-  const isReact = kind === "react";
-  const promptTokens = isReact ? 402 : 268;
-  const completionTokens = isReact ? 176 : 96;
-  const totalTokens = promptTokens + completionTokens;
-
-  return {
-    kind,
-    title: isReact ? "ReAct Agent" : "Baseline Chatbot",
-    content: isReact
-      ? `I inspected the simulated Excel deal sheet, checked item availability, applied the best eligible coupon, and compared final landed prices. Recommended deal: ${input} with the ReAct path because it can justify each step through observations.`
-      : `Based on the prompt, a reasonable deal for "${input}" appears to be the lowest listed price. This baseline answer does not verify stock, coupon eligibility, or shipping constraints.`,
-    latencyMs,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    costEstimate: Number(((totalTokens / 1000) * 0.01).toFixed(4)),
-    status: "success",
-    steps: isReact ? 3 : 1
-  };
-}
-
-function makeEvent(
-  event: string,
-  provider: Provider,
-  model: string,
-  latencyMs: number,
-  promptTokens: number,
-  completionTokens: number,
-  stepCount: number
-): TelemetryEvent {
-  const totalTokens = promptTokens + completionTokens;
-
-  return {
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    event,
-    provider,
-    model,
-    latencyMs,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    costEstimate: Number(((totalTokens / 1000) * 0.01).toFixed(4)),
-    stepCount
-  };
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+async function readError(response: Response) {
+  try {
+    const payload = await response.json();
+    return payload.detail ?? response.statusText;
+  } catch {
+    return response.statusText;
+  }
 }
