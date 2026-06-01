@@ -135,7 +135,7 @@ describe("AI Deal Hunter UI", () => {
 
     await user.selectOptions(screen.getByLabelText("Provider"), "gemini");
 
-    expect(screen.getByLabelText("Model")).toHaveValue("gemini-1.5-flash");
+    expect(screen.getByLabelText("Model")).toHaveValue("gemini-2.5-flash");
   });
 
   it("renders both chatbot responses after sending a prompt", async () => {

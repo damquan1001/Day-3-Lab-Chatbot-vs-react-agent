@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 from src.core.llm_provider import LLMProvider
 from src.core.local_provider import LocalProvider
 from src.core.openai_provider import OpenAIProvider
-from src.core.gemini_provider import GeminiProvider
+from src.core.gemini_provider import DEFAULT_GEMINI_MODEL, GeminiProvider
 from src.telemetry.logger import logger
 from src.telemetry.metrics import tracker
 
@@ -78,7 +78,7 @@ def get_llm(
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key or api_key.startswith("your_"):
             raise ValueError("Set GEMINI_API_KEY in .env for provider google")
-        model = model_name or os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        model = model_name or os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
         if not quiet:
             print(f"[google] Using model: {model}")
         return GeminiProvider(model_name=model, api_key=api_key)

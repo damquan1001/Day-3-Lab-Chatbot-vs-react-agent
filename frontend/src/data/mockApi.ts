@@ -1,5 +1,6 @@
 import type {
   AgentResponse,
+  ChatbotKind,
   ChatTurn,
   Conversation,
   Provider,
@@ -19,7 +20,7 @@ export const providerModels: ProviderModel[] = [
   {
     provider: "gemini",
     label: "Gemini",
-    models: ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"]
+    models: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"]
   },
   {
     provider: "local",
@@ -50,6 +51,11 @@ type CompareApiResponse = {
   usage?: UsageSummary;
 };
 
+type CompareUpdate = {
+  kind: ChatbotKind;
+  response: AgentResponse;
+};
+
 export async function listConversations() {
   return conversations;
 }
@@ -68,9 +74,27 @@ export async function sendComparisonMessage(
   input: string,
   provider: Provider,
   model: string,
-  conversationId: string
+  conversationId: string,
+  onUpdate?: (update: CompareUpdate) => void
 ) {
   const sessionId = sessionByConversation.get(conversationId);
+  const streamResponse = await fetch(`${API_BASE_URL}/api/compare/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      message: input,
+      provider,
+      model,
+      session_id: sessionId
+    })
+  });
+
+  if (streamResponse.ok && streamResponse.body) {
+    return readCompareStream(streamResponse, input, conversationId, onUpdate);
+  }
+
   const response = await fetch(`${API_BASE_URL}/api/compare`, {
     method: "POST",
     headers: {
@@ -85,7 +109,7 @@ export async function sendComparisonMessage(
   });
 
   if (!response.ok) {
-    const message = await readError(response);
+    const message = await readError(streamResponse.ok ? response : streamResponse);
     throw new Error(message);
   }
 
@@ -93,6 +117,8 @@ export async function sendComparisonMessage(
   if (data.session_id) {
     sessionByConversation.set(conversationId, data.session_id);
   }
+  onUpdate?.({ kind: "baseline", response: data.baseline });
+  onUpdate?.({ kind: "react", response: data.react });
 
   const turn: ChatTurn =
     data.turn ??
@@ -105,7 +131,113 @@ export async function sendComparisonMessage(
     } satisfies ChatTurn);
 
   turns = [...turns, turn];
-  conversations = conversations.map((conversation) =>
+  conversations = updateConversationTitle(conversations, conversationId, input);
+
+  if (data.telemetry) {
+    telemetry = [...data.telemetry, ...telemetry];
+  }
+
+  return { baseline: data.baseline, react: data.react, turn };
+}
+
+async function readCompareStream(
+  response: Response,
+  input: string,
+  conversationId: string,
+  onUpdate?: (update: CompareUpdate) => void
+) {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let baseline: AgentResponse | undefined;
+  let react: AgentResponse | undefined;
+  let finalPayload: Partial<CompareApiResponse> = {};
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+
+    for (const chunk of chunks) {
+      const event = parseSseEvent(chunk);
+      if (!event) {
+        continue;
+      }
+
+      if (event.event === "session" && event.data.session_id) {
+        sessionByConversation.set(conversationId, event.data.session_id);
+      }
+      if (event.event === "baseline") {
+        baseline = event.data as AgentResponse;
+        onUpdate?.({ kind: "baseline", response: baseline });
+      }
+      if (event.event === "react") {
+        react = event.data as AgentResponse;
+        onUpdate?.({ kind: "react", response: react });
+      }
+      if (event.event === "done") {
+        finalPayload = event.data as Partial<CompareApiResponse>;
+      }
+      if (event.event === "error") {
+        throw new Error(event.data.error ?? "Streaming comparison failed");
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (!baseline || !react) {
+    throw new Error("Streaming comparison ended before both responses were received");
+  }
+
+  if (finalPayload.session_id) {
+    sessionByConversation.set(conversationId, finalPayload.session_id);
+  }
+
+  const turn: ChatTurn =
+    finalPayload.turn ??
+    ({
+      id: crypto.randomUUID(),
+      prompt: input,
+      createdAt: new Date().toISOString(),
+      baseline,
+      react
+    } satisfies ChatTurn);
+
+  turns = [...turns, turn];
+  conversations = updateConversationTitle(conversations, conversationId, input);
+
+  if (finalPayload.telemetry) {
+    telemetry = [...finalPayload.telemetry, ...telemetry];
+  }
+
+  return { baseline, react, turn };
+}
+
+function parseSseEvent(chunk: string) {
+  const lines = chunk.split("\n");
+  const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "message";
+  const data = lines
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    event,
+    data: JSON.parse(data)
+  };
+}
+
+function updateConversationTitle(source: Conversation[], conversationId: string, input: string) {
+  return source.map((conversation) =>
     conversation.id === conversationId
       ? {
           ...conversation,
@@ -114,12 +246,6 @@ export async function sendComparisonMessage(
         }
       : conversation
   );
-
-  if (data.telemetry) {
-    telemetry = [...data.telemetry, ...telemetry];
-  }
-
-  return { baseline: data.baseline, react: data.react, turn };
 }
 
 export async function getTelemetry() {

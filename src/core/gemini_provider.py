@@ -4,8 +4,19 @@ import google.generativeai as genai
 from typing import Dict, Any, Optional, Generator
 from src.core.llm_provider import LLMProvider
 
+SUPPORTED_GEMINI_MODELS = (
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite",
+)
+DEFAULT_GEMINI_MODEL = SUPPORTED_GEMINI_MODELS[0]
+
+
 class GeminiProvider(LLMProvider):
-    def __init__(self, model_name: str = "gemini-1.5-flash", api_key: Optional[str] = None):
+    def __init__(self, model_name: str = DEFAULT_GEMINI_MODEL, api_key: Optional[str] = None):
+        if model_name not in SUPPORTED_GEMINI_MODELS:
+            supported = ", ".join(SUPPORTED_GEMINI_MODELS)
+            raise ValueError(f"Unsupported Gemini model: {model_name}. Use one of: {supported}")
         super().__init__(model_name, api_key)
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel(model_name)
