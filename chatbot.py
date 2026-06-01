@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     load_dotenv()
     args = parse_args()
-    provider = args.provider or os.getenv("DEFAULT_PROVIDER", "openai")
+    provider = args.provider or os.getenv("DEFAULT_PROVIDER", "local")
 
     logger.log_event("CHATBOT_START", {"provider": provider})
 

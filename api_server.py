@@ -40,7 +40,7 @@ def _parse_cors_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _llm, _provider
-    _provider = os.getenv("DEFAULT_PROVIDER", "openai")
+    _provider = os.getenv("DEFAULT_PROVIDER", "local")
     logger.log_event("API_START", {"provider": _provider, "port": os.getenv("API_PORT", "3003")})
     try:
         _llm = get_llm(_provider, quiet=True)

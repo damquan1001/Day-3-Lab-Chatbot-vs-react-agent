@@ -6,13 +6,11 @@ from src.core.llm_provider import LLMProvider
 from src.core.local_provider import LocalProvider
 from src.core.openai_provider import OpenAIProvider
 from src.core.gemini_provider import GeminiProvider
+from src.database.loader import build_system_prompt
 from src.telemetry.logger import logger
 from src.telemetry.metrics import tracker
 
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. Answer the user directly and concisely. "
-    "You do not have access to external tools or APIs."
-)
+SYSTEM_PROMPT = build_system_prompt()
 
 
 def get_llm(provider: str, *, quiet: bool = False) -> LLMProvider:
