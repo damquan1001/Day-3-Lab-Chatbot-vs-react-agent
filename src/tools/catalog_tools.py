@@ -190,7 +190,7 @@ class CatalogTools:
         self,
         query: str = "",
         category: str | None = None,
-        max_results: int = 5,
+        max_results: int = 20,
     ) -> dict[str, Any]:
         max_results = _bounded_max_results(max_results)
         offers = self.repository.search(
@@ -239,7 +239,7 @@ class CatalogTools:
         query: str = "",
         category: str | None = None,
         sort_by: str = "price_after_discount",
-        max_results: int = 5,
+        max_results: int = 20,
     ) -> dict[str, Any]:
         max_results = _bounded_max_results(max_results)
         offers = self.repository.search(
@@ -347,7 +347,7 @@ class CatalogTools:
                 "parameters": {
                     "query": "string",
                     "category": "optional string",
-                    "max_results": "optional integer, default 5, max 20",
+                    "max_results": "optional integer, default 20, max 50",
                 },
                 "func": lambda **kwargs: _to_json(self.search_products(**kwargs)),
             },
@@ -377,7 +377,7 @@ class CatalogTools:
                         "optional string: price_after_discount, rating, "
                         "discount_percent, max_delivery_days"
                     ),
-                    "max_results": "optional integer, default 5, max 20",
+                    "max_results": "optional integer, default 20, max 50",
                 },
                 "func": lambda **kwargs: _to_json(self.compare_products(**kwargs)),
             },
@@ -627,8 +627,8 @@ def _bounded_max_results(value: int) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        parsed = 5
-    return max(1, min(parsed, 20))
+        parsed = 20
+    return max(1, min(parsed, 50))
 
 
 def _safe_quantity(value: Any) -> int:

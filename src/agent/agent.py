@@ -57,8 +57,9 @@ Rules:
 - Never output an Action for a tool that is not listed.
 - Final Answer must sound like an agent explaining its decision, not a one-line chatbot.
 - Answer in Vietnamese by default for this lab UI, unless the user explicitly asks for another language.
-- Final Answer should be 5-8 natural sentences or 3-5 tight bullets.
-- Include: the chosen product/shop, final or sale price, rating, delivery time, why it beats at least one alternative from the observations, any description-based caveat, and a clear buying recommendation.
+- Final Answer should be very detailed and comprehensive, using at least 8-12 natural sentences or 5-8 detailed bullets.
+- You MUST first summarize or list all the available options/products found from your search/filter (the full data).
+- Then, include: the chosen product/shop, final or sale price, rating, delivery time, why it beats the other alternatives, any description-based caveat, and a clear buying recommendation.
 - Do not answer only "X is a good choice." The user should see the comparison logic.
 """.strip()
 
@@ -277,9 +278,10 @@ Thin final answer that must be improved:
 
 Rewrite the final answer in Vietnamese. Output only the final user-facing answer, no "Final Answer:" label.
 Requirements:
-- 5-8 natural sentences or 3-5 tight bullets.
+- Provide a very detailed and comprehensive answer, using at least 8-12 natural sentences or 5-8 detailed bullets.
+- First, summarize or list ALL the available options/products found from the filter/search.
 - Mention the chosen product/shop, price, rating, delivery time.
-- Explain why it beats at least one alternative if the observation includes alternatives.
+- Explain why it beats the other alternatives.
 - Mention description-based caveats or say the description has no obvious red flag.
 - End with a clear buying recommendation.
 """.strip()
@@ -313,12 +315,12 @@ Requirements:
 
     def _final_answer_is_too_thin(self, answer: str) -> bool:
         normalized = re.sub(r"\s+", " ", answer).strip()
-        if len(normalized) < 220:
+        if len(normalized) < 400:
             return True
 
         sentence_count = len(re.findall(r"[.!?。]|[。！？]", normalized))
         bullet_count = len(re.findall(r"(^|\n)\s*[-*•]", answer))
-        return sentence_count < 3 and bullet_count < 3
+        return sentence_count < 4 and bullet_count < 4
 
     def _parse_action_args(self, args: str) -> Any:
         args = args.strip()
