@@ -115,4 +115,4 @@ def test_react_agent_reasks_when_final_answer_is_too_short():
     answer = agent.run("tim ban phim khong day")
 
     assert "Mình chốt Keychron K2 V2" in answer
-    assert "Final Answer is too short" in llm.prompts[1][0]
+    assert "Thin final answer that must be improved" in llm.prompts[1][0]

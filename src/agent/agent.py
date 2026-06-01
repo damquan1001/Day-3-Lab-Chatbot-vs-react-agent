@@ -56,7 +56,7 @@ Rules:
 - If a tool fails or returns no data, explain that in the next Thought and try a better query.
 - Never output an Action for a tool that is not listed.
 - Final Answer must sound like an agent explaining its decision, not a one-line chatbot.
-- If the user writes Vietnamese, answer in Vietnamese.
+- Answer in Vietnamese by default for this lab UI, unless the user explicitly asks for another language.
 - Final Answer should be 5-8 natural sentences or 3-5 tight bullets.
 - Include: the chosen product/shop, final or sale price, rating, delivery time, why it beats at least one alternative from the observations, any description-based caveat, and a clear buying recommendation.
 - Do not answer only "X is a good choice." The user should see the comparison logic.
@@ -97,19 +97,52 @@ Rules:
 
             final_answer = self._parse_final_answer(content)
             if final_answer:
-                if self._final_answer_is_too_thin(final_answer) and step < self.max_steps:
+                if self._final_answer_is_too_thin(final_answer):
                     logger.log_event(
                         "AGENT_FINAL_TOO_THIN",
                         {"step": step, "answer_preview": final_answer[:300]},
                     )
-                    scratchpad = (
-                        f"{scratchpad}\n\nAssistant:\n{content}\n"
-                        "Observation: Final Answer is too short for this shopping agent. "
-                        "Rewrite it as detailed Vietnamese buying advice with 5-8 sentences "
-                        "or 3-5 bullets. Include chosen product/shop, price, rating, delivery, "
-                        "comparison with an alternative, caveats from description, and a clear recommendation."
+                    rewritten_answer = self._rewrite_thin_final_answer(
+                        user_input=user_input,
+                        scratchpad=scratchpad,
+                        latest_content=content,
+                        thin_answer=final_answer,
+                        step=step,
                     )
-                    continue
+                    if rewritten_answer and not self._final_answer_is_too_thin(
+                        rewritten_answer
+                    ):
+                        self.history.append(
+                            {
+                                "user": user_input,
+                                "steps": self.last_run_metrics["steps"],
+                                "final_answer": rewritten_answer,
+                            }
+                        )
+                        logger.log_event(
+                            "AGENT_END",
+                            {
+                                "steps": self.last_run_metrics["steps"],
+                                "status": "rewritten_final",
+                            },
+                        )
+                        return rewritten_answer
+
+                    if step >= self.max_steps:
+                        final_answer = rewritten_answer or final_answer
+                    else:
+                        rewrite_hint = (
+                            rewritten_answer
+                            if rewritten_answer
+                            else "The rewrite was still too short."
+                        )
+                        scratchpad = (
+                            f"{scratchpad}\n\nAssistant:\n{content}\n"
+                            f"Observation: Final Answer is too short for this shopping agent. "
+                            f"Previous rewrite attempt: {rewrite_hint}\n"
+                            "Write a much more detailed Vietnamese Final Answer now."
+                        )
+                        continue
 
                 self.history.append(
                     {
@@ -220,6 +253,63 @@ Rules:
             flags=re.IGNORECASE | re.DOTALL,
         )
         return match.group(1).strip() if match else ""
+
+    def _rewrite_thin_final_answer(
+        self,
+        user_input: str,
+        scratchpad: str,
+        latest_content: str,
+        thin_answer: str,
+        step: int,
+    ) -> str:
+        rewrite_prompt = f"""
+User request:
+{user_input}
+
+ReAct scratchpad and tool observations:
+{scratchpad}
+
+Latest assistant response:
+{latest_content}
+
+Thin final answer that must be improved:
+{thin_answer}
+
+Rewrite the final answer in Vietnamese. Output only the final user-facing answer, no "Final Answer:" label.
+Requirements:
+- 5-8 natural sentences or 3-5 tight bullets.
+- Mention the chosen product/shop, price, rating, delivery time.
+- Explain why it beats at least one alternative if the observation includes alternatives.
+- Mention description-based caveats or say the description has no obvious red flag.
+- End with a clear buying recommendation.
+""".strip()
+
+        try:
+            response = self.llm.generate(
+                rewrite_prompt,
+                system_prompt=(
+                    "You are a Vietnamese ReAct shopping advisor. Rewrite short answers "
+                    "into detailed, grounded buying advice. Do not invent facts outside "
+                    "the provided scratchpad and observations."
+                ),
+            )
+            self._add_response_metrics(response, step + 1)
+            self._track_llm_request(response)
+            rewritten = str(response.get("content", "")).strip()
+            rewritten = self._parse_final_answer(rewritten) or rewritten
+            logger.log_event(
+                "AGENT_FINAL_REWRITE",
+                {
+                    "step": step,
+                    "rewrite_preview": rewritten[:500],
+                    "usage": response.get("usage", {}),
+                    "latency_ms": response.get("latency_ms"),
+                },
+            )
+            return rewritten
+        except Exception as exc:
+            logger.log_event("AGENT_FINAL_REWRITE_FAILED", {"error": str(exc)})
+            return ""
 
     def _final_answer_is_too_thin(self, answer: str) -> bool:
         normalized = re.sub(r"\s+", " ", answer).strip()
