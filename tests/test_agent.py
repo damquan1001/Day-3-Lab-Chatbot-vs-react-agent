@@ -1,4 +1,9 @@
 from src.agent.agent import ReActAgent
+from src.agent.guards import (
+    GREETING_HINT_VI,
+    OUT_OF_SCOPE_MESSAGE_VI,
+    SAFETY_MESSAGE_VI,
+)
 
 
 class FakeLLM:
@@ -19,6 +24,17 @@ class FakeLLM:
 
     def stream(self, prompt, system_prompt=None):
         yield ""
+
+
+LONG_FINAL = (
+    "Final Answer: Mình chốt DareU EK87 vì đây là lựa chọn có giá sau giảm 527120 VND, "
+    "phù hợp nếu bạn muốn một bàn phím cơ TKL trong tầm giá dễ chịu. Rating của sản phẩm "
+    "đạt 4.6 nên đủ tốt để cân bằng giữa chi phí và độ tin cậy. Thời gian giao tối đa 3 ngày "
+    "cũng không quá chậm cho nhu cầu mua dùng sớm. So với các lựa chọn cao cấp hơn, DareU EK87 "
+    "không cố thắng bằng nhiều tính năng phụ mà thắng ở p/p. Mô tả nói rõ switch blue cho gõ nhanh, "
+    "nhưng bạn nên cân nhắc nếu không thích tiếng clicky. Nếu ưu tiên tiết kiệm mà vẫn muốn trải nghiệm "
+    "bàn phím cơ, đây là deal nên chọn."
+)
 
 
 def test_react_agent_calls_tool_and_returns_final_answer():
@@ -116,3 +132,164 @@ def test_react_agent_reasks_when_final_answer_is_too_short():
 
     assert "Mình chốt Keychron K2 V2" in answer
     assert "Thin final answer that must be improved" in llm.prompts[1][0]
+
+
+def _search_tool(func):
+    return {
+        "name": "search_products",
+        "description": "Search products.",
+        "func": func,
+    }
+
+
+def test_v2_parse_action_with_trailing_text():
+    calls = []
+
+    def search_products(**kwargs):
+        calls.append(kwargs)
+        return {"products": []}
+
+    llm = FakeLLM(
+        [
+            (
+                'Thought: search.\n'
+                'Action: search_products({"query": "mouse"})\n'
+                "Note: extra line after action should not break parser."
+            ),
+            LONG_FINAL,
+        ]
+    )
+    agent = ReActAgent(llm, tools=[_search_tool(search_products)], version=2)
+    answer = agent.run("tim chuot")
+
+    assert calls == [{"query": "mouse"}]
+    assert "DareU EK87" in answer
+
+
+def test_v2_parse_action_inside_code_fence():
+    calls = []
+
+    def search_products(**kwargs):
+        calls.append(kwargs)
+        return "ok"
+
+    llm = FakeLLM(
+        [
+            'Action: search_products(```json\n{"query": "keyboard"}\n```)\nTrailing text.',
+            LONG_FINAL,
+        ]
+    )
+    agent = ReActAgent(llm, tools=[_search_tool(search_products)], version=2)
+    agent.run("ban phim")
+
+    assert calls == [{"query": "keyboard"}]
+
+
+def test_v2_parse_retry_hint_in_scratchpad():
+    llm = FakeLLM(
+        [
+            "Thought: confused format only.",
+            'Action: search_products({"query": "mouse"})',
+            LONG_FINAL,
+        ]
+    )
+    agent = ReActAgent(llm, tools=[_search_tool(lambda **k: "ok")], version=2)
+    agent.run("tim chuot")
+
+    assert "RETRY:" in llm.prompts[1][0]
+
+
+def test_v2_blocks_duplicate_tool_calls():
+    calls = []
+
+    def search_products(**kwargs):
+        calls.append(kwargs)
+        return "ok"
+
+    duplicate_action = 'Action: search_products({"query": "mouse"})'
+    llm = FakeLLM(
+        [
+            duplicate_action,
+            duplicate_action,
+            LONG_FINAL,
+        ]
+    )
+    agent = ReActAgent(llm, tools=[_search_tool(search_products)], version=2)
+    agent.run("tim chuot")
+
+    assert len(calls) == 1
+    assert any("Duplicate action blocked" in prompt[0] for prompt in llm.prompts)
+
+
+def test_v2_blocks_final_without_tools_for_catalog_question():
+    calls = []
+
+    def search_products(**kwargs):
+        calls.append(kwargs)
+        return {"products": [{"product_name": "Mouse A", "price_after_discount": 100000}]}
+
+    llm = FakeLLM(
+        [
+            "Final Answer: Tổng là 200000 VND.",
+            'Action: search_products({"query": "chuot"})',
+            (
+                "Final Answer: Mình đã tính tổng dựa trên catalog sau khi gọi tool search_products. "
+                "Hai chuột với giá 100000 VND mỗi con cho tổng 200000 VND trước phí ship. "
+                "Rating và thời gian giao đều ở mức chấp nhận được cho đơn nhỏ. "
+                "So với mua lẻ từng cái, gom đơn giúp kiểm soát chi phí tốt hơn. "
+                "Không thấy red flag trong mô tả sản phẩm. Nếu cần mua nhanh hai con, đây là deal nên chọn. "
+                "Bạn có thể hỏi thêm coupon hoặc shop khác nếu muốn tối ưu thêm chi phí cuối cùng."
+            ),
+        ]
+    )
+    agent = ReActAgent(llm, tools=[_search_tool(search_products)], version=2)
+    answer = agent.run("tổng tiền 2 chuột")
+
+    assert len(calls) == 1
+    assert "must call at least one catalog tool" in llm.prompts[1][0]
+    assert "200000" in answer
+
+
+def test_v2_greeting_does_not_call_llm():
+    llm = FakeLLM(["should not run"])
+    agent = ReActAgent(llm, tools=[], version=2)
+
+    assert agent.run("xin chào") == GREETING_HINT_VI
+    assert llm.prompts == []
+
+
+def test_v2_out_of_scope_does_not_call_llm():
+    llm = FakeLLM(["should not run"])
+    agent = ReActAgent(llm, tools=[], version=2)
+
+    assert agent.run("thời tiết Hà Nội") == OUT_OF_SCOPE_MESSAGE_VI
+    assert llm.prompts == []
+
+
+def test_v2_temperature_out_of_scope_does_not_call_llm():
+    llm = FakeLLM(["should not run"])
+    agent = ReActAgent(llm, tools=[], version=2)
+
+    assert agent.run("nhiệt độ Hà Nội") == OUT_OF_SCOPE_MESSAGE_VI
+    assert llm.prompts == []
+
+
+def test_v2_safety_does_not_call_llm():
+    llm = FakeLLM(["should not run"])
+    agent = ReActAgent(llm, tools=[], version=2)
+
+    assert agent.run("sk-test123456789012345678") == SAFETY_MESSAGE_VI
+    assert llm.prompts == []
+
+
+def test_v2_catalog_question_still_calls_llm():
+    llm = FakeLLM(
+        [
+            'Action: search_products({"query": "chuot"})',
+            LONG_FINAL,
+        ]
+    )
+    agent = ReActAgent(llm, tools=[_search_tool(lambda **k: "ok")], version=2)
+    agent.run("giá chuột")
+
+    assert len(llm.prompts) >= 1

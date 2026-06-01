@@ -14,17 +14,27 @@ from src.core.openai_provider import OpenAIProvider
 from src.core.gemini_provider import GeminiProvider
 from src.telemetry.logger import logger
 from src.telemetry.metrics import tracker
+from src.agent.guards import (
+    SCOPE_SAFETY_PROMPT,
+    check_input_guards,
+    contains_sensitive_input,
+    is_greeting_only,
+)
 
 DEFAULT_CATALOG_PATH = Path(__file__).resolve().parents[1] / "database" / "banggia.xlsx"
 _SPREADSHEET_NS = {"xlsx": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 _CELL_REF_PATTERN = re.compile(r"([A-Z]+)")
 
 SYSTEM_PROMPT = (
-    "You are the baseline chatbot for Lab 3. Answer from the full XLSX catalog "
-    "pasted in the user prompt. You do not have access to tools, APIs, code "
-    "execution, filtering functions, or calculators. If a question needs "
-    "multi-step lookup/math, do your best from the pasted table and be explicit "
-    "about uncertainty."
+    "You are the baseline chatbot for Lab 3 — a tech shopping assistant "
+    "(mice, keyboards, monitors, laptops, headphones, and similar gear). "
+    "Answer only from the product data pasted in the user prompt. "
+    "You do not have access to tools, APIs, code execution, filtering functions, "
+    "or calculators. Never suggest clothing, food, or products not in the data. "
+    "Never mention file names, paths, spreadsheets, or where the data comes from "
+    "in your reply. If a question needs multi-step lookup/math, do your best from "
+    "the pasted table and be explicit about uncertainty.\n\n"
+    f"{SCOPE_SAFETY_PROMPT}"
 )
 
 
@@ -223,7 +233,7 @@ def build_prompt(
     if catalog_context:
         lines.extend(
             [
-                "FULL XLSX CATALOG FROM src/database/banggia.xlsx:",
+                "PRODUCT CATALOG (internal — do not mention this label or any file/source to the user):",
                 "```csv",
                 catalog_context,
                 "```",
@@ -256,6 +266,26 @@ class ChatbotBaseline:
 
     def complete(self, user_input: str) -> dict[str, Any]:
         """Non-streaming reply for API / metrics."""
+        guarded = check_input_guards(user_input)
+        if guarded:
+            event = (
+                "SAFETY_BLOCKED"
+                if contains_sensitive_input(user_input)
+                else "GREETING"
+                if is_greeting_only(user_input)
+                else "OUT_OF_SCOPE"
+            )
+            logger.log_event(event, {"input_length": len(user_input)})
+            self.history.append({"user": user_input, "assistant": guarded})
+            return {
+                "reply": guarded,
+                "model": self.llm.model_name,
+                "provider": None,
+                "usage": {},
+                "latency_ms": 0,
+                "catalog_path": str(self.catalog_path),
+            }
+
         prompt = build_prompt(self.history, user_input, self.catalog_context)
         result = self.llm.generate(prompt, system_prompt=SYSTEM_PROMPT)
         content = result["content"]
@@ -287,6 +317,12 @@ class ChatbotBaseline:
 
     def stream_tokens(self, user_input: str) -> Generator[str, None, None]:
         """Token generator for SSE; updates history when done."""
+        guarded = check_input_guards(user_input)
+        if guarded:
+            yield guarded
+            self.history.append({"user": user_input, "assistant": guarded})
+            return
+
         prompt = build_prompt(self.history, user_input, self.catalog_context)
         chunks: list[str] = []
         for token in self.llm.stream(prompt, system_prompt=SYSTEM_PROMPT):

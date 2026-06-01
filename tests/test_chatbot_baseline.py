@@ -1,3 +1,4 @@
+from src.agent.guards import SAFETY_MESSAGE_VI
 from src.chat.baseline import (
     ChatbotBaseline,
     build_catalog_context,
@@ -63,7 +64,7 @@ def test_load_catalog_context_reads_full_xlsx_file():
 def test_build_prompt_injects_catalog_without_tools():
     prompt = build_prompt([], "tim ban phim", "category,product_name\nkeyboard,K120")
 
-    assert "FULL XLSX CATALOG" in prompt
+    assert "PRODUCT CATALOG" in prompt
     assert "category,product_name" in prompt
     assert "User: tim ban phim" in prompt
 
@@ -80,3 +81,13 @@ def test_chatbot_baseline_sends_catalog_to_llm():
     assert result["reply"] == "baseline answer"
     assert "Logitech K120" in llm.last_prompt
     assert "do not have access to tools" in llm.last_system_prompt
+
+
+def test_chatbot_baseline_blocks_sensitive_input_without_llm():
+    llm = FakeLLM("should not run")
+    bot = ChatbotBaseline(llm, catalog_context="category,product_name\nkeyboard,K120")
+
+    result = bot.complete("openai key sk-test123456789012345678")
+
+    assert result["reply"] == SAFETY_MESSAGE_VI
+    assert llm.last_prompt is None

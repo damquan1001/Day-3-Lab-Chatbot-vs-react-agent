@@ -145,8 +145,8 @@ export function AppShell() {
             <FileSpreadsheet className="h-4 w-4 text-accent" />
             Simulated database
           </div>
-          <p className="mt-2 text-sm font-medium">banggia.xlsx</p>
-          <p className="mt-1 text-xs text-muted-foreground">Backend catalog for baseline and tools</p>
+          <p className="mt-2 text-sm font-medium">Danh mục sản phẩm công nghệ</p>
+          <p className="mt-1 text-xs text-muted-foreground">Chuột, bàn phím, màn hình, laptop...</p>
         </div>
 
         <div className="mt-5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

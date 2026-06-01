@@ -41,8 +41,9 @@ def load_price_catalog(path: Path | None = None) -> str:
 def build_system_prompt() -> str:
     catalog = load_price_catalog()
     return (
-        "Chatbot hỗ trợ truy xuất giá.\n"
-        "Trả lời bằng tiếng Việt, chỉ dựa trên bảng giá bên dưới. "
-        "Không bịa thông tin không có trong dữ liệu.\n\n"
-        f"Bảng giá:\n{catalog}"
+        "Chatbot tư vấn sản phẩm công nghệ (chuột, bàn phím, màn hình, laptop...).\n"
+        "Trả lời bằng tiếng Việt, chỉ dựa trên dữ liệu sản phẩm bên dưới. "
+        "Không bịa thông tin không có trong dữ liệu. "
+        "Không nhắc tên file, đường dẫn hay nguồn dữ liệu trong câu trả lời.\n\n"
+        f"Dữ liệu sản phẩm:\n{catalog}"
     )

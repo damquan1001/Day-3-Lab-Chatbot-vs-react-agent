@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.agent.agent import ReActAgent
+from src.agent.agent import ReActAgent, resolve_agent_version
 from src.chat.baseline import ChatbotBaseline, get_default_provider, get_llm
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
@@ -85,6 +85,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
+    agent_version: Optional[int] = Field(None, ge=1, le=2)
 
 
 class ChatResponse(BaseModel):
@@ -154,6 +155,7 @@ def _agent_response(
     steps: int = 1,
     status: str = "success",
     error_code: Optional[str] = None,
+    agent_version: Optional[int] = None,
 ) -> dict[str, Any]:
     usage = usage or {}
     prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
@@ -162,7 +164,7 @@ def _agent_response(
     if total_tokens == 0:
         total_tokens = prompt_tokens + completion_tokens
 
-    return {
+    payload: dict[str, Any] = {
         "kind": kind,
         "title": title,
         "content": content,
@@ -175,6 +177,9 @@ def _agent_response(
         "errorCode": error_code,
         "steps": steps,
     }
+    if agent_version is not None:
+        payload["agentVersion"] = agent_version
+    return payload
 
 
 def _record_event(
@@ -278,8 +283,9 @@ def compare(req: ChatRequest):
         )
 
     try:
+        version = resolve_agent_version(req.agent_version)
         start = time.time()
-        agent = ReActAgent(llm=req_llm, tools=_tools, max_steps=5)
+        agent = ReActAgent(llm=req_llm, tools=_tools, max_steps=5, version=version)
         answer = agent.run(prompt)
         latency_ms = int((time.time() - start) * 1000)
         metrics = dict(agent.last_run_metrics)
@@ -291,6 +297,7 @@ def compare(req: ChatRequest):
             latency_ms=latency_ms,
             usage=metrics,
             steps=int(metrics.get("steps", 0) or 1),
+            agent_version=version,
         )
     except Exception as e:
         logger.log_event("API_REACT_ERROR", {"error": str(e)})
