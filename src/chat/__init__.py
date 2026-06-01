@@ -1,3 +1,17 @@
-from src.chat.baseline import ChatbotBaseline, get_llm, build_prompt, SYSTEM_PROMPT
+from src.chat.baseline import (
+    ChatbotBaseline,
+    SYSTEM_PROMPT,
+    build_catalog_context,
+    build_prompt,
+    get_llm,
+    load_catalog_context,
+)
 
-__all__ = ["ChatbotBaseline", "get_llm", "build_prompt", "SYSTEM_PROMPT"]
+__all__ = [
+    "ChatbotBaseline",
+    "SYSTEM_PROMPT",
+    "build_catalog_context",
+    "build_prompt",
+    "get_llm",
+    "load_catalog_context",
+]
