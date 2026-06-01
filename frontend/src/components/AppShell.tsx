@@ -15,6 +15,7 @@ import {
   createConversation,
   getTelemetry,
   getUsageSummary,
+  listConversationTurns,
   listConversations,
   providerModels,
   sendComparisonMessage
@@ -44,6 +45,7 @@ export function AppShell() {
     setModel,
     setProvider,
     setTelemetry,
+    setTurns,
     setUsage,
     telemetry,
     turns,
@@ -60,6 +62,10 @@ export function AppShell() {
   const conversationsQuery = useQuery({
     queryKey: ["conversations"],
     queryFn: listConversations
+  });
+  const turnsQuery = useQuery({
+    queryKey: ["turns", activeConversationId],
+    queryFn: () => listConversationTurns(activeConversationId)
   });
   const telemetryQuery = useQuery({
     queryKey: ["telemetry", activeConversationId],
@@ -107,6 +113,12 @@ export function AppShell() {
   }, [conversationsQuery.data, setConversations]);
 
   useEffect(() => {
+    if (turnsQuery.data) {
+      setTurns(turnsQuery.data);
+    }
+  }, [turnsQuery.data, setTurns]);
+
+  useEffect(() => {
     if (telemetryQuery.data) {
       setTelemetry(telemetryQuery.data);
     }
@@ -134,6 +146,7 @@ export function AppShell() {
 
     setPendingTurn({
       id: crypto.randomUUID(),
+      conversationId: activeConversationId,
       prompt: trimmed,
       createdAt: new Date().toISOString()
     });

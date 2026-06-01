@@ -37,10 +37,20 @@ const seedConversations: Conversation[] = [
   }
 ];
 
-let conversations = [...seedConversations];
-let turns: ChatTurn[] = [];
-let telemetry: TelemetryEvent[] = [];
-const sessionByConversation = new Map<string, string>();
+type PersistedChatState = {
+  conversations: Conversation[];
+  turns: ChatTurn[];
+  telemetry: TelemetryEvent[];
+  sessions: Record<string, string>;
+};
+
+const STORAGE_KEY = "ai-deal-hunter-chat-state";
+const initialState = loadPersistedState();
+
+let conversations = initialState.conversations;
+let turns: ChatTurn[] = initialState.turns;
+let telemetry: TelemetryEvent[] = initialState.telemetry;
+const sessionByConversation = new Map(Object.entries(initialState.sessions));
 
 type CompareApiResponse = {
   baseline: AgentResponse;
@@ -60,6 +70,10 @@ export async function listConversations() {
   return conversations;
 }
 
+export async function listConversationTurns(conversationId: string) {
+  return turns.filter((turn) => turn.conversationId === conversationId);
+}
+
 export async function createConversation() {
   const conversation: Conversation = {
     id: `conv-${crypto.randomUUID()}`,
@@ -67,6 +81,7 @@ export async function createConversation() {
     updatedAt: new Date().toISOString()
   };
   conversations = [conversation, ...conversations];
+  persistState();
   return conversation;
 }
 
@@ -116,25 +131,20 @@ export async function sendComparisonMessage(
   const data = (await response.json()) as CompareApiResponse;
   if (data.session_id) {
     sessionByConversation.set(conversationId, data.session_id);
+    persistState();
   }
   onUpdate?.({ kind: "baseline", response: data.baseline });
   onUpdate?.({ kind: "react", response: data.react });
 
-  const turn: ChatTurn =
-    data.turn ??
-    ({
-      id: crypto.randomUUID(),
-      prompt: input,
-      createdAt: new Date().toISOString(),
-      baseline: data.baseline,
-      react: data.react
-    } satisfies ChatTurn);
+  const turn = normalizeTurn(data.turn, conversationId, input, data.baseline, data.react);
 
   turns = [...turns, turn];
   conversations = updateConversationTitle(conversations, conversationId, input);
+  persistState();
 
   if (data.telemetry) {
     telemetry = [...data.telemetry, ...telemetry];
+    persistState();
   }
 
   return { baseline: data.baseline, react: data.react, turn };
@@ -168,6 +178,7 @@ async function readCompareStream(
 
       if (event.event === "session" && event.data.session_id) {
         sessionByConversation.set(conversationId, event.data.session_id);
+        persistState();
       }
       if (event.event === "baseline") {
         baseline = event.data as AgentResponse;
@@ -196,17 +207,10 @@ async function readCompareStream(
 
   if (finalPayload.session_id) {
     sessionByConversation.set(conversationId, finalPayload.session_id);
+    persistState();
   }
 
-  const turn: ChatTurn =
-    finalPayload.turn ??
-    ({
-      id: crypto.randomUUID(),
-      prompt: input,
-      createdAt: new Date().toISOString(),
-      baseline,
-      react
-    } satisfies ChatTurn);
+  const turn = normalizeTurn(finalPayload.turn, conversationId, input, baseline, react);
 
   turns = [...turns, turn];
   conversations = updateConversationTitle(conversations, conversationId, input);
@@ -214,6 +218,7 @@ async function readCompareStream(
   if (finalPayload.telemetry) {
     telemetry = [...finalPayload.telemetry, ...telemetry];
   }
+  persistState();
 
   return { baseline, react, turn };
 }
@@ -248,6 +253,69 @@ function updateConversationTitle(source: Conversation[], conversationId: string,
   );
 }
 
+function normalizeTurn(
+  turn: ChatTurn | undefined,
+  conversationId: string,
+  input: string,
+  baseline: AgentResponse,
+  react: AgentResponse
+): ChatTurn {
+  return {
+    id: turn?.id ?? crypto.randomUUID(),
+    conversationId,
+    prompt: turn?.prompt ?? input,
+    createdAt: turn?.createdAt ?? new Date().toISOString(),
+    baseline: turn?.baseline ?? baseline,
+    react: turn?.react ?? react
+  };
+}
+
+function loadPersistedState(): PersistedChatState {
+  const fallback = {
+    conversations: [...seedConversations],
+    turns: [],
+    telemetry: [],
+    sessions: {}
+  };
+
+  if (typeof localStorage === "undefined") {
+    return fallback;
+  }
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedChatState>;
+    return {
+      conversations: parsed.conversations?.length ? parsed.conversations : fallback.conversations,
+      turns: Array.isArray(parsed.turns)
+        ? parsed.turns.filter((turn) => Boolean(turn.conversationId))
+        : fallback.turns,
+      telemetry: Array.isArray(parsed.telemetry) ? parsed.telemetry : fallback.telemetry,
+      sessions: parsed.sessions ?? fallback.sessions
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function persistState() {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+
+  const payload: PersistedChatState = {
+    conversations,
+    turns,
+    telemetry,
+    sessions: Object.fromEntries(sessionByConversation.entries())
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+}
+
 export async function getTelemetry() {
   const response = await fetch(`${API_BASE_URL}/api/telemetry`);
   if (!response.ok) {
@@ -255,6 +323,7 @@ export async function getTelemetry() {
   }
 
   telemetry = (await response.json()) as TelemetryEvent[];
+  persistState();
   return telemetry;
 }
 

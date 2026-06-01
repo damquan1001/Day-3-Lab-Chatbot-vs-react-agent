@@ -103,6 +103,7 @@ describe("AI Deal Hunter UI", () => {
             },
             turn: {
               id: "turn-1",
+              conversationId: "conv-1",
               prompt: body.message,
               createdAt: new Date().toISOString(),
               baseline: baselineResponse,
