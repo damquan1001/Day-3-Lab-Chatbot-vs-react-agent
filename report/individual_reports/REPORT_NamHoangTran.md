@@ -1,6 +1,6 @@
 # Individual Report: Lab 3 - Chatbot vs ReAct Agent
 
-- **Student Name**: Nam Hoang
+- **Student Name**: Trần Hoàng Nam
 - **Student ID**: 2A202600870
 - **Date**: 2026-06-01
 
@@ -10,12 +10,11 @@
 
 *Describe your specific contribution to the codebase (e.g., implemented a specific tool, fixed the parser, etc.).*
 
-- **Modules Implementated**: `src/agent/agent.py` và `src/tools/catalog_tools.py`
+- **Roles & Responsibilities**: Code Merging, System Integration, and contributing to Part 3 (Personal Insights).
 - **Code Highlights**: 
-  - Đã cập nhật `get_system_prompt()` trong `agent.py` để bổ sung yêu cầu: "You MUST first summarize or list all the available options/products found from your search/filter (the full data)."
-  - Tăng điều kiện bắt buộc chiều dài của `_final_answer_is_too_thin` lên 400 ký tự và ép ít nhất 4 ý (câu/gạch đầu dòng).
-  - Tăng giới hạn trả về của Tool `search_products` và `compare_products` từ `max_results = 5` lên `20` (max = 50) trong file `catalog_tools.py`.
-- **Documentation**: Sửa đổi logic của ReAct Agent để nó không bỏ qua các dữ liệu lấy được từ Tool, ép nó phải hoạt động phân tích giống như một tư vấn viên thay vì chọn bừa một đáp án ngắn gọn.
+  - **Code Merging & Integration**: Responsible for merging code from different team members, resolving merge conflicts, and connecting various modules to ensure the entire system works cohesively.
+  - **System Assembly**: Integrated the tools, agent logic, and API server components, ensuring smooth data flow between different parts of the project.
+  - **Refinement**: Assisted in refining the codebase structure and standardizing the integration points across the project.
 
 ---
 
@@ -23,12 +22,12 @@
 
 *Analyze a specific failure event you encountered during the lab using the logging system.*
 
-- **Problem Description**: ReAct Agent trả về kết quả quá ngắn gọn bằng tiếng Anh ("The AKKO 3098B Plus at PhongVu is a good wireless keyboard option...") mà không hề so sánh với các sản phẩm khác, phớt lờ hoàn toàn yêu cầu trả lời tiếng Việt.
-- **Log Source**: `logs/2026-06-01.log` hoặc trace in ra từ `api_server.py`.
+- **Problem Description**: The ReAct Agent returned overly brief results in English ("The AKKO 3098B Plus at PhongVu is a good wireless keyboard option...") without comparing it to other products, completely ignoring the request to answer in Vietnamese.
+- **Log Source**: `logs/2026-06-01.log` or trace printed from `api_server.py`.
 - **Diagnosis**: 
-  1. Do Tool trả về quá ít data (mặc định chỉ 5 kết quả).
-  2. Do Agent model sinh câu trả lời bị "lười", và hàm `_final_answer_is_too_thin()` kiểm tra < 220 ký tự chưa đủ chặt chẽ để chặn câu trả lời 157 ký tự bằng tiếng Anh. Khi hàm rewrite thất bại nó sẽ trượt thẳng ra kết quả cuối.
-- **Solution**: Đã nâng cấp `_final_answer_is_too_thin()` kiểm tra lên `len < 400`, đồng thời ép `sentence_count < 4`. Kèm theo việc mở rộng size observation từ Tools để LLM không bị thiếu data.
+  1. The Tool returned too little data (defaulting to only 5 results).
+  2. The Agent model was "lazy" in generating answers, and the `_final_answer_is_too_thin()` function checking for `< 220` characters was not strict enough to block a 157-character English response. When the rewrite function failed, it slipped right through to the final result.
+- **Solution**: Upgraded `_final_answer_is_too_thin()` to check for `len < 400` and enforced `sentence_count < 4`. This was accompanied by expanding the observation size from Tools so the LLM wouldn't lack data.
 
 ---
 
@@ -36,9 +35,9 @@
 
 *Reflect on the reasoning capability difference.*
 
-1.  **Reasoning**: `Thought` block giúp Agent suy nghĩ từng bước, gọi Tool tìm kiếm, phân tích dữ liệu trả về trước khi đưa ra kết luận. Khác với Chatbot bị ngợp bởi một núi Data CSV đập thẳng vào mặt, Agent có khả năng tự chắt lọc thông tin nhờ các tool query.
-2.  **Reliability**: Trong các câu hỏi cần quét toàn bộ kho để tìm sản phẩm *độc lạ* mà chưa biết keyword chính xác, Agent có thể tệ hơn Chatbot vì Tool Search bị giới hạn từ khoá và số lượng kết quả (nếu keyword không match, Tool sẽ không trả về gì). Trong khi Chatbot có Full CSV nên nó tự tự "tìm thủ công" bằng mắt của LLM.
-3.  **Observation**: Observation là mạch máu của ReAct. Nếu Observation cụt ngủn hoặc rỗng, Agent sẽ hoang mang, tự bịa ra dữ liệu (hallucinate) hoặc trả về lỗi cụt lủn. Việc mở rộng data trả về cho Observation đã quyết định 90% chất lượng của Final Answer.
+1.  **Reasoning**: The `Thought` block allows the Agent to think step-by-step, call search tools, and analyze the returned data before reaching a conclusion. Unlike a standard Chatbot that is overwhelmed by a mountain of raw CSV data, the Agent can proactively filter and extract information itself using query tools.
+2.  **Reliability**: For questions that require scanning the entire inventory to find unique products without knowing the exact keyword, the Agent might perform worse than a Chatbot because the Search Tool is limited by keywords and result count (if keywords don't match, the Tool returns nothing). Meanwhile, the Chatbot has the full CSV, so it manually "searches" using the LLM's context window.
+3.  **Observation**: Observation is the lifeblood of ReAct. If the observation is truncated or empty, the Agent will be confused, hallucinate data, or return an abrupt error. Expanding the data returned for the Observation dictated 90% of the Final Answer's quality.
 
 ---
 
@@ -46,6 +45,6 @@
 
 *How would you scale this for a production-level AI agent system?*
 
-- **Scalability**: Thay vì viết Tool đọc file excel thủ công bằng python cơ bản, nên tích hợp với Vector Database hoặc Elasticsearch để có khả năng search Semantic thay vì Exact Match.
-- **Safety**: Xây dựng một Guardrail Agent chạy song song chuyên kiểm duyệt câu trả lời (Final Answer) của ReAct Agent để chặn việc nó lười biếng hoặc văng tiếng Anh trước khi gửi cho End-User.
-- **Performance**: Xử lý async (bất đồng bộ) khi gọi nhiều tool song song thay vì tuần tự, rút ngắn độ trễ (hiện tại mất gần 10s cho 2-3 step).
+- **Scalability**: Instead of writing a basic Python tool to read Excel files manually, the system should be integrated with a Vector Database or Elasticsearch for Semantic Search capabilities rather than relying on Exact Match.
+- **Safety**: Build a parallel Guardrail Agent specifically to moderate the ReAct Agent's Final Answer, preventing it from being lazy or answering in English before sending it to the End-User.
+- **Performance**: Implement async processing when calling multiple tools in parallel instead of sequentially to reduce latency (currently it takes nearly 10s for 2-3 steps).
