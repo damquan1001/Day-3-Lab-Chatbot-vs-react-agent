@@ -23,6 +23,5 @@ graph TD
     end
     
     LLM_Think --> |Đủ dữ liệu| Final[Tạo Final Answer]
-    Final --> Check[Kiểm duyệt độ dài (Chống trả lời quá ngắn)]
-    Check --> UI
+    Final --> UI([Trả kết quả cho Frontend])
 ```
