@@ -1,3 +1,5 @@
+import unicodedata
+
 from src.core.product_analyzer import (
     analyze_products,
     normalize_products,
@@ -26,6 +28,15 @@ class FakeLLM:
 
     def stream(self, prompt, system_prompt=None):
         yield self.content
+
+
+def _ascii_fold(value):
+    folded = "".join(
+        char
+        for char in unicodedata.normalize("NFD", value)
+        if unicodedata.category(char) != "Mn"
+    )
+    return folded.replace("đ", "d").replace("Đ", "D")
 
 
 def test_analyze_products_uses_llm_choice_without_formula_ranking():
@@ -65,7 +76,7 @@ def test_analyze_products_uses_llm_choice_without_formula_ranking():
     assert result["product_name"] == "Keyboard B"
     assert result["final_price"] == 130000
     assert result["llm_used"] is True
-    assert "Khong dung cong thuc diem cung" in llm.last_system_prompt
+    assert "Khong dung cong thuc diem cung" in _ascii_fold(llm.last_system_prompt)
 
 
 def test_parse_llm_json_accepts_code_fences_and_extra_text():
