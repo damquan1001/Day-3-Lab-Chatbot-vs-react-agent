@@ -150,6 +150,3 @@ Final evaluation ran with **agent version 2** (`AGENT_VERSION=2` or `"agent_vers
 - **Cost Control**: Use a cheaper path for simple lookups. If a prompt asks for a single cheapest item, call `compare_products` directly or allow a concise ReAct final answer. Reserve the detailed 5-8 bullet recommendation prompt for multi-condition comparisons.
 
 ---
-
-> [!NOTE]
-> Submit this report by renaming it to `GROUP_REPORT_[TEAM_NAME].md` and placing it in this folder.

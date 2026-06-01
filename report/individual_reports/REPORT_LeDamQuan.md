@@ -10,7 +10,12 @@
 
 *Describe your specific contribution to the codebase (e.g., implemented a specific tool, fixed the parser, etc.).*
 
-- **Modules Implementated**: `api_server.py`, `frontend/src/components/AppShell.tsx`, `frontend/src/data/mockApi.ts`, `frontend/src/components/MarkdownContent.tsx`, `frontend/src/store/useAppStore.ts`, `frontend/src/types.ts`, `src/core/gemini_provider.py`, `src/chat/baseline.py`, `tests/test_api_server.py`, `frontend/src/App.test.tsx`
+- **Modules Implementated**: 
+<br>- Proposed the idea of AI Deal Hunting agent that can look for the best product prices
+<br>- Design and implemented the UI/UX of the app
+<br>- Intuitive telemetry and logs in-app display
+<br>- Tokens count and token costs estimation in-app display
+
 - **Code Highlights**:
   - Added `/api/compare/stream` in `api_server.py` so the Baseline response can be emitted first and the ReAct response can arrive later without blocking the UI.
   - Updated `frontend/src/data/mockApi.ts` to consume Server-Sent Events from `/api/compare/stream`, update each response panel independently, and fall back to `/api/compare` when streaming is unavailable.
@@ -57,6 +62,3 @@
 - **Performance**: Add a fast path for simple lookup prompts. If the user only asks for the cheapest product in one category, the backend can call `compare_products` directly or allow a concise ReAct answer instead of forcing a long final recommendation.
 
 ---
-
-> [!NOTE]
-> Submit this report by renaming it to `REPORT_[YOUR_NAME].md` and placing it in this folder.
