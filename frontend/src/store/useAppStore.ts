@@ -13,6 +13,7 @@ type AppState = {
   setModel: (model: string) => void;
   setActiveConversationId: (id: string) => void;
   setConversations: (conversations: Conversation[]) => void;
+  setTurns: (turns: ChatTurn[]) => void;
   addConversation: (conversation: Conversation) => void;
   addTurn: (turn: ChatTurn) => void;
   setTelemetry: (events: TelemetryEvent[]) => void;
@@ -33,8 +34,9 @@ export const useAppStore = create<AppState>((set) => ({
   },
   setProvider: (provider, model) => set({ provider, model }),
   setModel: (model) => set({ model }),
-  setActiveConversationId: (activeConversationId) => set({ activeConversationId }),
+  setActiveConversationId: (activeConversationId) => set({ activeConversationId, turns: [] }),
   setConversations: (conversations) => set({ conversations }),
+  setTurns: (turns) => set({ turns }),
   addConversation: (conversation) =>
     set((state) => ({
       conversations: [conversation, ...state.conversations],

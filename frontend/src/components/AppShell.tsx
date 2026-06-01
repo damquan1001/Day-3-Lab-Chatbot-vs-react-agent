@@ -15,16 +15,23 @@ import {
   createConversation,
   getTelemetry,
   getUsageSummary,
+  listConversationTurns,
   listConversations,
   providerModels,
   sendComparisonMessage
 } from "../data/mockApi";
 import { formatCurrency, formatLatency } from "../lib/utils";
 import { useAppStore } from "../store/useAppStore";
-import type { Provider } from "../types";
+import type { AgentResponse, ChatTurn, Provider } from "../types";
 import type { TelemetryEvent } from "../types";
+import { MarkdownContent } from "./MarkdownContent";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+
+type PendingTurn = Omit<ChatTurn, "baseline" | "react"> & {
+  baseline?: AgentResponse;
+  react?: AgentResponse;
+};
 
 export function AppShell() {
   const {
@@ -38,12 +45,14 @@ export function AppShell() {
     setModel,
     setProvider,
     setTelemetry,
+    setTurns,
     setUsage,
     telemetry,
     turns,
     usage
   } = useAppStore();
   const [input, setInput] = useState("");
+  const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
 
   const providerConfig = useMemo(
     () => providerModels.find((item) => item.provider === provider) ?? providerModels[0],
@@ -53,6 +62,10 @@ export function AppShell() {
   const conversationsQuery = useQuery({
     queryKey: ["conversations"],
     queryFn: listConversations
+  });
+  const turnsQuery = useQuery({
+    queryKey: ["turns", activeConversationId],
+    queryFn: () => listConversationTurns(activeConversationId)
   });
   const telemetryQuery = useQuery({
     queryKey: ["telemetry", activeConversationId],
@@ -70,13 +83,26 @@ export function AppShell() {
 
   const sendMessageMutation = useMutation({
     mutationFn: (message: string) =>
-      sendComparisonMessage(message, provider, model, activeConversationId),
+      sendComparisonMessage(message, provider, model, activeConversationId, ({ kind, response }) => {
+        setPendingTurn((turn) =>
+          turn
+            ? {
+                ...turn,
+                [kind]: response
+              }
+            : turn
+        );
+      }),
     onSuccess: async ({ turn }) => {
       addTurn(turn);
+      setPendingTurn(null);
       setInput("");
       const [nextTelemetry, nextUsage] = await Promise.all([getTelemetry(), getUsageSummary()]);
       setTelemetry(nextTelemetry);
       setUsage(nextUsage);
+    },
+    onError: () => {
+      setPendingTurn(null);
     }
   });
 
@@ -85,6 +111,12 @@ export function AppShell() {
       setConversations(conversationsQuery.data);
     }
   }, [conversationsQuery.data, setConversations]);
+
+  useEffect(() => {
+    if (turnsQuery.data) {
+      setTurns(turnsQuery.data);
+    }
+  }, [turnsQuery.data, setTurns]);
 
   useEffect(() => {
     if (telemetryQuery.data) {
@@ -112,10 +144,16 @@ export function AppShell() {
       return;
     }
 
+    setPendingTurn({
+      id: crypto.randomUUID(),
+      conversationId: activeConversationId,
+      prompt: trimmed,
+      createdAt: new Date().toISOString()
+    });
     sendMessageMutation.mutate(trimmed);
   }
 
-  const latestTurn = turns.at(-1);
+  const latestTurn = pendingTurn ?? turns.at(-1);
   const loading = sendMessageMutation.isPending;
 
   return (
@@ -258,13 +296,13 @@ export function AppShell() {
             <div className="grid h-full min-h-0 gap-4 xl:grid-cols-2">
               <ResponsePanel
                 accent="border-primary/30"
-                loading={loading}
+                loading={loading && !latestTurn?.baseline}
                 response={latestTurn?.baseline}
                 title="Baseline Chatbot"
               />
               <ResponsePanel
                 accent="border-accent/40"
-                loading={loading}
+                loading={loading && !latestTurn?.react}
                 response={latestTurn?.react}
                 title="ReAct Agent"
               />
@@ -340,6 +378,7 @@ export function AppShell() {
           <span>
             Cost: <strong className="text-foreground">{formatCurrency(usage.estimatedCost)}</strong>
           </span>
+          <span>Cost estimate uses reported total tokens at $0.01 per 1K tokens.</span>
           <span>
             Avg latency:{" "}
             <strong className="text-foreground">{formatLatency(usage.averageLatencyMs)}</strong>
@@ -389,14 +428,14 @@ function ResponsePanel({
       </div>
 
       <div className="scrollbar-subtle min-h-0 flex-1 overflow-y-auto p-4">
-        {loading ? (
+        {response ? (
+          <MarkdownContent content={response.content} />
+        ) : loading ? (
           <div className="space-y-3">
             <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
             <div className="h-4 w-5/6 animate-pulse rounded bg-muted" />
             <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
           </div>
-        ) : response ? (
-          <p className="whitespace-pre-wrap text-sm leading-6">{response.content}</p>
         ) : (
           <div className="flex h-full min-h-72 items-center justify-center text-center text-sm text-muted-foreground">
             Send a deal-hunting prompt to compare the baseline chatbot against the ReAct agent.

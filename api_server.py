@@ -347,6 +347,113 @@ def compare(req: ChatRequest):
     )
 
 
+@app.post("/api/compare/stream")
+def compare_stream(req: ChatRequest):
+    req_llm = _get_llm_for_req(req.provider, req.model)
+    sid, bot = _get_session(req.session_id, req_llm)
+    prompt = req.message.strip()
+
+    def sse(event: str, payload: dict[str, Any]) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+    def event_generator():
+        yield sse("session", {"session_id": sid})
+
+        try:
+            baseline_data = bot.complete(prompt)
+            baseline = _agent_response(
+                kind="baseline",
+                title="Baseline Chatbot",
+                content=baseline_data["reply"],
+                latency_ms=int(baseline_data.get("latency_ms") or 0),
+                usage=baseline_data.get("usage") or {},
+                steps=1,
+            )
+        except Exception as e:
+            logger.log_event("API_BASELINE_ERROR", {"error": str(e)})
+            baseline = _agent_response(
+                kind="baseline",
+                title="Baseline Chatbot",
+                content=f"Baseline failed: {e}",
+                latency_ms=0,
+                status="error",
+                error_code="BASELINE_ERROR",
+            )
+        yield sse("baseline", baseline)
+
+        try:
+            start = time.time()
+            agent = ReActAgent(llm=req_llm, tools=_tools, max_steps=5)
+            answer = agent.run(prompt)
+            latency_ms = int((time.time() - start) * 1000)
+            metrics = dict(agent.last_run_metrics)
+            metrics["latency_ms"] = metrics.get("latency_ms") or latency_ms
+            react = _agent_response(
+                kind="react",
+                title="ReAct Agent",
+                content=answer,
+                latency_ms=latency_ms,
+                usage=metrics,
+                steps=int(metrics.get("steps", 0) or 1),
+            )
+        except Exception as e:
+            logger.log_event("API_REACT_ERROR", {"error": str(e)})
+            react = _agent_response(
+                kind="react",
+                title="ReAct Agent",
+                content=f"ReAct agent failed: {e}",
+                latency_ms=0,
+                status="error",
+                error_code="REACT_ERROR",
+            )
+        yield sse("react", react)
+
+        turn = {
+            "id": str(uuid.uuid4()),
+            "prompt": prompt,
+            "createdAt": datetime.utcnow().isoformat(),
+            "baseline": baseline,
+            "react": react,
+        }
+        new_events = [
+            _record_event(
+                "CHATBOT_BASELINE",
+                baseline,
+                baseline.get("steps", 1),
+                baseline.get("errorCode"),
+                llm=req_llm,
+                provider=req.provider,
+            ),
+            _record_event(
+                "AGENT_END",
+                react,
+                react.get("steps", 1),
+                react.get("errorCode"),
+                llm=req_llm,
+                provider=req.provider,
+            ),
+        ]
+        yield sse(
+            "done",
+            {
+                "turn": turn,
+                "session_id": sid,
+                "telemetry": new_events,
+                "usage": _usage_summary(),
+            },
+        )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/telemetry")
 def telemetry():
     return _api_events

@@ -10,6 +10,7 @@ export type Conversation = {
 
 export type ChatTurn = {
   id: string;
+  conversationId: string;
   prompt: string;
   createdAt: string;
   baseline: AgentResponse;
